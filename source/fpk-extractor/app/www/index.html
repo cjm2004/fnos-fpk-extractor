@@ -101,12 +101,15 @@
   a.dl:hover{border-color:var(--accent);color:var(--accent)}
   .hide{display:none !important}
   .tag.own{color:#8b5cf6;border-color:#8b5cf655;background:#8b5cf612}
-  .out input{font:inherit;width:100%;padding:8px 11px;border:1px solid var(--line);border-radius:9px;
+  /* 设置输出目录那张卡片里的表单。注意别复用页头的 .out —— 那个类带
+     max-width:48% + 右对齐（页头要贴着右边），套到整宽卡片里会让输入框只占右半边。 */
+  .outform{padding:12px 16px 16px}
+  .outform input{font:inherit;width:100%;padding:8px 11px;border:1px solid var(--line);border-radius:9px;
              background:var(--panel);color:var(--text);font-size:12.5px;
              font-family:ui-monospace,Menlo,Consolas,monospace}
-  .out input:focus{outline:none;border-color:var(--accent)}
-  .out .tip{font-size:12.5px;color:var(--dim);margin-top:8px;line-height:1.6}
-  .out .tip code{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:1px 6px}
+  .outform input:focus{outline:none;border-color:var(--accent)}
+  .outform .tip{font-size:12.5px;color:var(--dim);margin-top:8px;line-height:1.6}
+  .outform .tip code{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:1px 6px}
 
   /* ---------- 更新：顶部横幅 ---------- */
   .banner{display:flex;align-items:center;gap:12px;padding:12px 16px;margin-bottom:16px;
@@ -193,7 +196,7 @@
       <button class="ghost" id="btn-outcancel">取消</button>
       <button class="primary" id="btn-outsave">保存</button>
     </div>
-    <div class="out" style="padding:12px 16px 16px">
+    <div class="outform">
       <input id="outinput" placeholder="/vol1/备份/fpk" spellcheck="false" autocomplete="off">
       <div class="tip">填<b>绝对路径</b>，例如 <code>/vol1/备份/fpk</code>；目录不存在会自动创建。
         点「恢复默认」回到共享文件夹 <b>fpk-extractor</b>。</div>
