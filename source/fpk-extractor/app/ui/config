@@ -1,0 +1,15 @@
+{
+    ".url": {
+        "fpk-extractor.main": {
+            "title": "应用提取器",
+            "desc": "扫描已安装应用并还原为离线 .fpk",
+            "icon": "images/{0}.png",
+            "type": "iframe",
+            "protocol": "",
+            "gatewayPrefix": "/app/fpk-extractor",
+            "gatewaySocket": "app.sock",
+            "url": "/app/fpk-extractor",
+            "allUsers": true
+        }
+    }
+}

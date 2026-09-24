@@ -1,0 +1,88 @@
+#!/bin/bash
+# ============================================================================
+#  应用提取器 — 服务启停
+#  后端为 Python 3 标准库 HTTP 服务（飞牛 fnOS 自带 /usr/bin/python3）
+# ============================================================================
+set -u
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+APP_ROOT="$(cd "$HERE/.." && pwd)"
+TARGET="${TRIM_APPDEST:-$APP_ROOT/target}"
+SERVER="$TARGET/server/server.py"
+VARDIR="${TRIM_PKGVAR:-/tmp}"
+PIDFILE="$VARDIR/server.pid"
+LOGFILE="$VARDIR/server.log"
+
+PY=""
+for c in /usr/bin/python3 python3 python; do
+    if command -v "$c" >/dev/null 2>&1; then PY="$c"; break; fi
+done
+
+pid_of() {
+    [ -f "$PIDFILE" ] || return 1
+    local p
+    p="$(head -n 1 "$PIDFILE" 2>/dev/null | tr -d '[:space:]')"
+    [ -n "$p" ] || return 1
+    printf '%s' "$p"
+}
+
+is_running() {
+    local p
+    p="$(pid_of)" || return 1
+    kill -0 "$p" 2>/dev/null
+}
+
+fail() {
+    echo "$1" >>"${TRIM_TEMP_LOGFILE:-/dev/null}" 2>/dev/null || true
+    echo "$1" >&2
+    exit 1
+}
+
+case "$1" in
+start)
+    if is_running; then
+        exit 0
+    fi
+    [ -n "$PY" ] || fail "未找到 python3，无法启动服务。"
+    [ -f "$SERVER" ] || fail "缺少服务端文件：$SERVER"
+
+    mkdir -p "$VARDIR" 2>/dev/null
+    rm -f "$TARGET/app.sock" 2>/dev/null          # 清掉上次残留的统一网关 socket
+    cd "$TARGET/server" || fail "无法进入 $TARGET/server"
+
+    nohup "$PY" "$SERVER" >>"$LOGFILE" 2>&1 &
+    echo $! >"$PIDFILE"
+
+    i=0
+    while [ $i -lt 12 ]; do
+        sleep 0.5
+        is_running && exit 0
+        i=$((i + 1))
+    done
+    rm -f "$PIDFILE"
+    fail "服务启动失败，详见 $LOGFILE"
+    ;;
+stop)
+    p="$(pid_of)" || true
+    if [ -n "${p:-}" ] && kill -0 "$p" 2>/dev/null; then
+        kill -TERM "$p" 2>/dev/null
+        i=0
+        while [ $i -lt 12 ]; do
+            sleep 0.5
+            kill -0 "$p" 2>/dev/null || break
+            i=$((i + 1))
+        done
+        kill -0 "$p" 2>/dev/null && kill -KILL "$p" 2>/dev/null
+    fi
+    rm -f "$PIDFILE"
+    rm -f "$TARGET/app.sock" 2>/dev/null
+    exit 0
+    ;;
+status)
+    if is_running; then exit 0; fi
+    exit 3
+    ;;
+*)
+    exit 1
+    ;;
+esac

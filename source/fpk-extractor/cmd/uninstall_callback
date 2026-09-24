@@ -1,0 +1,4 @@
+#!/bin/bash
+# 卸载后执行
+# 已导出的 .fpk 位于共享文件夹 fpk-extractor 中，属于用户数据，卸载时不删除。
+exit 0

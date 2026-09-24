@@ -1,0 +1,333 @@
+#!/bin/bash
+# ============================================================================
+#  应用提取器 (fpk-extractor) — 提取引擎
+#
+#  作用：把飞牛 fnOS 应用中心「已安装」的应用，重新打包成可离线安装的 .fpk
+#        输出到共享目录，便于备份 / 迁移 / 给无网络或纯内网的设备离线安装。
+#
+#  用法：
+#    bash fpk-extract [选项]
+#      --scope all|none   提取范围（默认 all；none = 什么都不做）
+#      --only a,b,c       只提取这些 appname，逗号分隔；留空 = 全部
+#      --out  DIR         指定输出目录（默认自动定位共享目录）
+#      --list             仅列出已安装应用并退出
+#      -h, --help         显示帮助
+#
+#  原理（已在真机 fpk 上核对）：
+#    .fpk 本身就是一个 tar.gz，内部结构为：
+#        manifest  app.tgz  cmd/  config/  wizard/  ui/  ICON.PNG  ICON_256.PNG
+#    其中 manifest 的 checksum 字段 == app.tgz 的 MD5（md5sum）。
+#    应用安装后位于 /var/apps/<appname>/：
+#        target -> /vol{n}/@appcenter/<appname>   应用文件（打包成 app.tgz）
+#        etc var tmp home meta                    指向存储卷的软链（运行时数据，需跳过）
+#    因此：复制包根文件 + 把 target/ 打成 app.tgz + 重算 checksum，即可还原出
+#         一个结构完整、可被应用中心正常安装的 .fpk。
+#
+#  安全性：全程只读 /var/apps，不修改、不删除任何已安装应用。
+# ============================================================================
+export LC_ALL=C
+
+set -u
+
+SELF_NAME="fpk-extractor"
+ENGINE_VER="1.0.0"
+APPS_ROOT="${APPS_ROOT:-/var/apps}"
+
+SCOPE="all"
+ONLY=""
+OUT_OVERRIDE=""
+DO_LIST=0
+
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+
+usage() {
+    cat <<'EOF'
+应用提取器 (fpk-extractor) — 把应用中心已安装的应用还原为可离线安装的 .fpk
+
+用法: bash fpk-extract [选项]
+
+  --scope all|none   提取范围（默认 all；none 表示什么也不做）
+  --only  a,b,c      只提取这些 appname，逗号分隔；留空表示全部
+  --out   DIR        指定输出目录（默认自动定位共享目录）
+  --list             仅列出已安装应用后退出
+  -h, --help         显示本帮助
+EOF
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --scope)    SCOPE="${2:-all}"; shift 2 ;;
+        --scope=*)  SCOPE="${1#*=}";  shift   ;;
+        --only)     ONLY="${2:-}";    shift 2 ;;
+        --only=*)   ONLY="${1#*=}";   shift   ;;
+        --out)      OUT_OVERRIDE="${2:-}"; shift 2 ;;
+        --out=*)    OUT_OVERRIDE="${1#*=}";    shift ;;
+        --list)     DO_LIST=1; shift ;;
+        -h|--help)  usage; exit 0 ;;
+        *)          shift ;;
+    esac
+done
+
+# ------------------------------------------------------------------ 日志
+LOGDIR="${TRIM_PKGVAR:-/tmp}"
+mkdir -p "$LOGDIR" 2>/dev/null || LOGDIR=/tmp
+LOG="$LOGDIR/fpk-extract.log"
+
+log() {
+    local m
+    m="$(date '+%Y-%m-%d %H:%M:%S') $*"
+    printf '%s\n' "$m" >>"$LOG" 2>/dev/null
+    printf '%s\n' "$m"
+}
+
+human() {
+    local b="$1"
+    if   [ "$b" -ge 1073741824 ]; then awk "BEGIN{printf \"%.2f GB\", $b/1073741824}"
+    elif [ "$b" -ge 1048576 ];    then awk "BEGIN{printf \"%.1f MB\", $b/1048576}"
+    elif [ "$b" -ge 1024 ];       then awk "BEGIN{printf \"%.1f KB\", $b/1024}"
+    else printf '%s B' "$b"; fi
+}
+
+# 读取 manifest 的 key 值（容忍 key=value / key = value / value 带引号）
+mf_get() {
+    local file="$1" key="$2"
+    [ -f "$file" ] || return 0
+    sed -n "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*//p" "$file" \
+        | head -n 1 \
+        | sed 's/^"//; s/"$//' \
+        | sed 's/[[:space:]]*$//'
+}
+
+is_selected() {
+    [ -z "$ONLY" ] && return 0
+    local want
+    for want in ${ONLY//,/ }; do
+        [ "$want" = "$1" ] && return 0
+    done
+    return 1
+}
+
+# ------------------------------------------------------ 输出目录定位
+resolve_out() {
+    local p sub
+    if [ -n "$OUT_OVERRIDE" ]; then
+        mkdir -p "$OUT_OVERRIDE" 2>/dev/null && { printf '%s' "$OUT_OVERRIDE"; return; }
+    fi
+
+    # 1) 系统注入的共享目录路径（config/resource 里声明的 data-share）
+    if [ -n "${TRIM_DATA_SHARE_PATHS:-}" ]; then
+        p="${TRIM_DATA_SHARE_PATHS%%:*}"
+        if [ -d "$p" ] || mkdir -p "$p" 2>/dev/null; then
+            printf '%s' "$p"; return
+        fi
+    fi
+
+    # 2) /var/apps/<self>/shares 或 share 下的软链
+    for p in "/var/apps/$SELF_NAME/shares" "/var/apps/$SELF_NAME/share"; do
+        if [ -d "$p" ]; then
+            sub="$(find "$p" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | head -n 1)"
+            printf '%s' "${sub:-$p}"; return
+        fi
+    done
+
+    # 3) 存储卷根目录下同名共享文件夹
+    for p in /vol*/"$SELF_NAME" /vol*/*/"$SELF_NAME"; do
+        [ -d "$p" ] && { printf '%s' "$p"; return; }
+    done
+
+    # 4) 兜底：应用数据目录
+    p="${TRIM_PKGVAR:-/tmp/fpk-extractor}/output"
+    mkdir -p "$p" 2>/dev/null
+    printf '%s' "$p"
+}
+
+# ------------------------------------------------------ 单个应用打包
+try_build_one() {
+    local src="$1"
+    local name ver plat md5 out bn
+    local work="$WORK/$2"
+
+    name="$(mf_get "$src/manifest" appname)"
+    [ -n "$name" ] || name="$(basename "$src")"
+    ver="$(mf_get "$src/manifest" version)"
+    [ -n "$ver" ] || ver="0.0.0"
+    plat="$(mf_get "$src/manifest" platform)"
+    [ -n "$plat" ] || plat="all"
+
+    rm -rf "$work"
+    mkdir -p "$work/cmd" || return 1
+
+    # 1) 复制包根内容：manifest / cmd / config / wizard / ui / ICON*.PNG / *.sc ...
+    local e
+    for e in "$src"/*; do
+        [ -e "$e" ] || continue
+        bn="$(basename "$e")"
+        case "$bn" in
+            target|etc|var|tmp|home|meta|shares|share|app) continue ;;
+        esac
+        [ -L "$e" ] && continue          # 软链均为运行时目录，跳过
+        [ "$bn" = "$name" ] && continue
+        cp -a "$e" "$work/" 2>/dev/null || log "    ! 复制 $bn 失败（已忽略）"
+    done
+
+    # manifest 必须存在，否则无法还原成一个合法的包
+    if [ ! -f "$work/manifest" ]; then
+        cp -a "$src/manifest" "$work/manifest" 2>/dev/null
+    fi
+    [ -f "$work/manifest" ] || { log "    ! 缺少 manifest，跳过"; return 1; }
+
+    # 2) target/ -> app.tgz
+    if [ ! -d "$src/target" ]; then
+        log "    ! 缺少 target 目录，跳过"
+        return 1
+    fi
+    tar czf "$work/app.tgz" -C "$src/target" . 2>>"$LOG"
+    [ -s "$work/app.tgz" ] || { log "    ! app.tgz 生成失败"; return 1; }
+
+    # 3) 补齐标准生命周期脚本：缺少时用空实现占位，避免目标机安装时报缺文件
+    local s stubbed=""
+    for s in main install_init install_callback upgrade_init upgrade_callback \
+             uninstall_init uninstall_callback config_init config_callback; do
+        if [ ! -f "$work/cmd/$s" ]; then
+            printf '#!/bin/bash\nexit 0\n' >"$work/cmd/$s"
+            stubbed="$stubbed $s"
+        fi
+    done
+    [ -n "$stubbed" ] && log "    · 补齐缺失脚本：$stubbed"
+
+    # 4) ui/ 兼容：部分包把 ui 放在包根，部分只放在 target 内
+    if [ ! -e "$work/ui" ]; then
+        if [ -d "$src/target/ui" ]; then
+            cp -a "$src/target/ui" "$work/ui"
+        elif [ -d "/var/apps_ui/$name" ]; then
+            cp -a "/var/apps_ui/$name" "$work/ui"
+        fi
+    fi
+
+    # 5) 图标兜底（应用中心安装时通常要求图标存在）
+    [ -s "$work/ICON.PNG" ]     || cp -f "$SELF_DIR/fallback/ICON.PNG"     "$work/" 2>/dev/null
+    [ -s "$work/ICON_256.PNG" ] || cp -f "$SELF_DIR/fallback/ICON_256.PNG" "$work/" 2>/dev/null
+
+    # 6) checksum = app.tgz 的 MD5
+    md5="$(md5sum "$work/app.tgz" | cut -d' ' -f1)"
+    if [ -n "$md5" ]; then
+        if grep -q '^checksum' "$work/manifest"; then
+            sed -i "s|^checksum.*|checksum        = $md5|" "$work/manifest"
+        else
+            printf 'checksum        = %s\n' "$md5" >>"$work/manifest"
+        fi
+    fi
+
+    # 7) 打成 fpk（tar.gz，成员为包根下的各条目）
+    #    在 work 内用相对名生成再移出：避免输出路径带冒号时被 tar 当成远程主机
+    fname="${name}_${ver}_${plat}.fpk"
+    out="$OUT/$fname"
+    rm -f "$out" "$work/$fname"
+    if ! ( cd "$work" && tar czf "$fname" -- * ) 2>>"$LOG"; then
+        log "    ! 打包失败"
+        rm -f "$work/$fname" "$out"
+        return 1
+    fi
+    if ! mv -f "$work/$fname" "$out" 2>>"$LOG"; then
+        log "    ! 写出结果失败：$out"
+        rm -f "$work/$fname"
+        return 1
+    fi
+
+    # 8) 结果校验
+    if ! ( cd "$OUT" && tar tzf "$fname" ) >/dev/null 2>&1; then
+        log "    ! 生成结果损坏，已删除"
+        rm -f "$out"
+        return 1
+    fi
+
+    local sz
+    sz="$(wc -c <"$out" | tr -d ' ')"
+    log "    ✓ $name $ver  →  $fname  ($(human "$sz"))"
+    printf '%s\t%s\t%s\t%s\n' "$name" "$ver" "$fname" "$sz" >>"$RESULT"
+
+    rm -rf "$work"
+    return 0
+}
+
+# ------------------------------------------------------ 主流程
+OUT="$(resolve_out)"
+mkdir -p "$OUT" 2>/dev/null || { log "无法创建输出目录：$OUT"; exit 1; }
+RESULT="$OUT/report.tsv"
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/fpk-extract-XXXXXX")"
+trap 'rm -rf "$WORK"' EXIT INT TERM
+
+if [ "$DO_LIST" -eq 1 ]; then
+    printf '%-32s %-14s %s\n' "APPNAME" "VERSION" "目录"
+    for d in "$APPS_ROOT"/*/; do
+        d="${d%/}"
+        [ -f "$d/manifest" ] || continue
+        printf '%-32s %-14s %s\n' \
+            "$(mf_get "$d/manifest" appname)" \
+            "$(mf_get "$d/manifest" version)" \
+            "$d"
+    done
+    exit 0
+fi
+
+log "=============================================================="
+log "应用提取器 v$ENGINE_VER 启动"
+log "输出目录：$OUT"
+log "提取范围：$SCOPE${ONLY:+  仅限: $ONLY}"
+avail="$(df -k "$OUT" 2>/dev/null | awk 'NR==2{print $4}')"
+[ -n "${avail:-}" ] && log "可用空间：$(human $((avail * 1024)))"
+log "--------------------------------------------------------------"
+
+if [ "$SCOPE" = "none" ]; then
+    log "按配置跳过本次提取。"
+    exit 0
+fi
+
+COUNT=0
+OK=0
+FAIL=0
+
+for d in "$APPS_ROOT"/*/; do
+    d="${d%/}"
+    [ -d "$d" ] || continue
+    [ -f "$d/manifest" ] || continue
+
+    name="$(mf_get "$d/manifest" appname)"
+    [ -n "$name" ] || name="$(basename "$d")"
+
+    if [ "$name" = "$SELF_NAME" ]; then
+        log "[skip] $name（本应用自身）"
+        continue
+    fi
+    is_selected "$name" || continue
+
+    COUNT=$((COUNT + 1))
+    log "[$COUNT] 提取 $name"
+    if try_build_one "$d" "$name"; then
+        OK=$((OK + 1))
+    else
+        FAIL=$((FAIL + 1))
+    fi
+done
+
+log "--------------------------------------------------------------"
+log "完成：成功 $OK 个，失败 $FAIL 个，共扫描到 $COUNT 个应用"
+log "输出目录：$OUT"
+
+{
+    printf '应用提取器 v%s  提取报告\n' "$ENGINE_VER"
+    printf '执行时间   : %s\n' "$(date '+%Y-%m-%d %H:%M:%S')"
+    printf '系统版本   : %s\n' "${TRIM_SYS_VERSION:-未知}"
+    printf '输出目录   : %s\n' "$OUT"
+    printf '结果       : 成功 %s / 失败 %s\n' "$OK" "$FAIL"
+    printf '\n%-30s %-12s %s\n' "APPNAME" "VERSION" "文件"
+    printf -- '--------------------------------------------------------------\n'
+    if [ -s "$RESULT" ]; then
+        awk -F'\t' '{printf "%-30s %-12s %s\n", $1, $2, $3}' "$RESULT"
+    fi
+    printf -- '--------------------------------------------------------------\n'
+    printf '安装方法：应用中心 → 右上角「手动安装」→ 选择对应 .fpk 文件\n'
+} >"$OUT/report.txt" 2>/dev/null
+
+log "已生成报告：$OUT/report.txt"
+exit 0

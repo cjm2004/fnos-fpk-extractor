@@ -1,0 +1,23 @@
+[
+  {
+    "stepTitle": "输出目录",
+    "items": [
+      {
+        "type": "text",
+        "field": "outdir",
+        "label": "输出目录（留空 = 共享文件夹 fpk-extractor）",
+        "initValue": "",
+        "rules": [
+          {
+            "pattern": "^(|/.*)$",
+            "message": "请填写绝对路径，例如 /vol1/备份/fpk"
+          }
+        ]
+      },
+      {
+        "type": "tips",
+        "helpText": "填<b>绝对路径</b>，例如 <b>/vol1/备份/fpk</b>；目录不存在会自动创建。留空表示仍用共享文件夹 <b>fpk-extractor</b>。<br><br>也可以直接在桌面窗口里点「输出目录 → 更改」随时修改，改完立即生效，不必回到这里。"
+      }
+    ]
+  }
+]

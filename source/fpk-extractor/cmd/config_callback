@@ -1,0 +1,25 @@
+#!/bin/bash
+# ============================================================================
+#  应用提取器 — 配置变更后执行
+#  ① 把「应用设置」里填的输出目录写进服务端读取的配置文件
+#  ② 重启一次服务，保证配置生效
+# ============================================================================
+set -u
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+VARDIR="${TRIM_PKGVAR:-/tmp}"
+
+# 向导字段 outdir -> 环境变量 wizard_outdir
+OUT="${wizard_outdir:-}"
+
+if [ -n "$OUT" ]; then
+    mkdir -p "$VARDIR" 2>/dev/null
+    printf '%s\n' "$OUT" >"$VARDIR/outdir.conf" 2>/dev/null
+else
+    rm -f "$VARDIR/outdir.conf" 2>/dev/null      # 留空 = 恢复默认共享文件夹
+fi
+
+/bin/bash "$HERE/main" stop  >/dev/null 2>&1
+/bin/bash "$HERE/main" start >/dev/null 2>&1
+
+exit 0

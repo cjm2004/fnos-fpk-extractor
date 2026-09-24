@@ -1,0 +1,16 @@
+appname               = fpk-extractor
+version               = 1.0.0
+display_name          = 应用提取器
+desc                  = 扫描应用中心「已安装」的应用，勾选后一键还原成可离线安装的 .fpk 安装包，输出到共享文件夹 fpk-extractor。<br>用途：备份常用应用、版本回退、迁移到新设备，以及给无网络或纯内网的飞牛设备离线安装。<br>过程只读取 /var/apps，不会修改或删除任何已安装应用，也不会把用户数据打进包里；因需读取各应用目录，故以 root 权限运行。<br>已接入「fnOS 应用更新管理器」，可直接在应用内检查并一键更新。<br>点击桌面图标即可打开操作界面。
+platform              = all
+source                = thirdparty
+maintainer            = 无名的小卒
+distributor           = 无名的小卒
+maintainer_url        = https://github.com/cjm2004/fnos-fpk-extractor
+os_min_version        = 0.9.0
+service_port          = 8520
+checkport             = true
+ctl_stop              = true
+desktop_uidir         = ui
+desktop_applaunchname = fpk-extractor.main
+changelog             = v1.0.0 首个公开版本：在飞牛桌面窗口里扫描应用中心「已安装」的应用，勾选后一键还原成可离线安装的 .fpk，实时显示进度与日志、可随时中止，输出目录可自定义，结果也能直接下载到电脑；走飞牛统一网关接入，http / https 访问都能直接打开；已接入「fnOS 应用更新管理器」，可检查新版本并按可选 / 强制更新策略一键下载、校验、安装并重启。

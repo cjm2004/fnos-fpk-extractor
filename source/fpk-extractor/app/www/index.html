@@ -1,0 +1,769 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>应用提取器</title>
+<style>
+  :root{
+    --bg:#f5f7fb; --panel:#ffffff; --panel2:#fafbfe; --line:#e5e9f2;
+    --text:#1c2434; --dim:#69748b; --accent:#3b7cf0; --accent2:#17a8d6;
+    --ok:#12a150; --warn:#d97706; --err:#dc2626; --shadow:0 1px 2px rgba(22,34,58,.06),0 8px 24px rgba(22,34,58,.06);
+    --radius:14px;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#12161f; --panel:#1a2030; --panel2:#161b28; --line:#2b3448;
+           --text:#e8ecf5; --dim:#9aa6bd; --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.25); }
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);
+       font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;}
+  .wrap{max-width:1080px;margin:0 auto;padding:20px 18px 48px}
+
+  header{display:flex;align-items:center;gap:14px;margin-bottom:18px}
+  header img{width:48px;height:48px;border-radius:12px;flex:0 0 auto}
+  header h1{font-size:19px;margin:0;font-weight:650;letter-spacing:.2px}
+  header p{margin:2px 0 0;font-size:12.5px;color:var(--dim)}
+  .out{margin-left:auto;text-align:right;font-size:12px;color:var(--dim);max-width:48%}
+  .out code{background:var(--panel);border:1px solid var(--line);border-radius:8px;
+            padding:4px 8px;display:inline-block;font-size:11.5px;word-break:break-all}
+  .verline{margin-top:7px;white-space:nowrap}
+  .verline b{color:var(--text)}
+  .verline button{padding:3px 9px;font-size:12px}
+  .verline .busy{color:var(--accent)}
+  /* 「检查更新」的结果就显示在按钮下方 —— 界面上没有设置面板，反馈得留在这儿 */
+  .vmsg{margin-top:4px;font-size:12px;line-height:1.55;text-align:right;word-break:break-word}
+  .vmsg.ok{color:var(--ok)}
+  .vmsg.info{color:var(--accent)}
+  .vmsg.warn{color:var(--warn)}
+  .vmsg.err{color:var(--err)}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+        box-shadow:var(--shadow);overflow:hidden;margin-bottom:16px}
+  .card > .head{display:flex;align-items:center;gap:10px;padding:12px 16px;
+                border-bottom:1px solid var(--line);background:var(--panel2);flex-wrap:wrap}
+  .card > .head h2{font-size:14px;margin:0;font-weight:600}
+  .card > .body{padding:6px 0}
+
+  button{font:inherit;border:1px solid var(--line);background:var(--panel);color:var(--text);
+         padding:7px 14px;border-radius:9px;cursor:pointer;transition:.15s;white-space:nowrap}
+  button:hover{border-color:var(--accent);color:var(--accent)}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  button.primary{background:linear-gradient(135deg,var(--accent),var(--accent2));
+                 color:#fff;border:none;font-weight:600;padding:8px 18px}
+  button.primary:hover{filter:brightness(1.06);color:#fff}
+  button.ghost{border-color:transparent;background:transparent;color:var(--dim);padding:6px 10px}
+  button.ghost:hover{background:var(--panel2);color:var(--accent)}
+
+  .spacer{flex:1}
+  .count{font-size:12.5px;color:var(--dim)}
+  .count b{color:var(--accent)}
+
+  ul.apps{list-style:none;margin:0;padding:0;max-height:46vh;overflow:auto}
+  ul.apps li{display:flex;align-items:center;gap:12px;padding:11px 16px;border-bottom:1px solid var(--line)}
+  ul.apps li:last-child{border-bottom:none}
+  ul.apps li:hover{background:var(--panel2)}
+  ul.apps input[type=checkbox]{width:16px;height:16px;accent-color:var(--accent);cursor:pointer;flex:0 0 auto}
+  .nm{min-width:0;flex:1}
+  .nm .t{font-weight:600;font-size:13.5px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .nm .s{font-size:11.5px;color:var(--dim);font-family:ui-monospace,Menlo,Consolas,monospace}
+  .tag{font-size:10.5px;padding:1px 7px;border-radius:20px;border:1px solid var(--line);
+       color:var(--dim);font-weight:500;flex:0 0 auto}
+  .tag.x86{color:#3b7cf0;border-color:#3b7cf055;background:#3b7cf012}
+  .tag.arm{color:#12a150;border-color:#12a15055;background:#12a15012}
+  .tag.all{color:#8b5cf6;border-color:#8b5cf655;background:#8b5cf612}
+  .size{font-size:12px;color:var(--dim);flex:0 0 auto;font-variant-numeric:tabular-nums;min-width:64px;text-align:right}
+
+  .empty{padding:34px 16px;text-align:center;color:var(--dim);font-size:13px}
+
+  .bar{height:7px;border-radius:6px;background:var(--line);overflow:hidden;margin:0 16px 10px}
+  .bar > i{display:block;height:100%;width:0;border-radius:6px;
+           background:linear-gradient(90deg,var(--accent),var(--accent2));transition:width .35s}
+  .stat{display:flex;align-items:center;gap:14px;padding:12px 16px 4px;font-size:13px;flex-wrap:wrap}
+  .stat .cur{color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:52%}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--accent);flex:0 0 auto}
+  .dot.run{animation:pulse 1.1s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+  pre.log{margin:0;padding:12px 16px;max-height:230px;overflow:auto;font-size:11.5px;line-height:1.55;
+          font-family:ui-monospace,Menlo,Consolas,monospace;color:var(--dim);white-space:pre-wrap;word-break:break-all}
+  .msg{padding:10px 16px;font-size:13px}
+  .msg.ok{color:var(--ok)} .msg.err{color:var(--err)} .msg.warn{color:var(--warn)}
+
+  table.files{width:100%;border-collapse:collapse}
+  table.files td{padding:9px 16px;border-bottom:1px solid var(--line);font-size:13px;vertical-align:middle}
+  table.files tr:last-child td{border-bottom:none}
+  table.files .f{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;word-break:break-all}
+  table.files .r{text-align:right;white-space:nowrap;width:1%}
+  .hint{font-size:12px;color:var(--dim);padding:10px 16px 14px}
+  a.dl{display:inline-block;border:1px solid var(--line);background:var(--panel);color:var(--text);
+       padding:6px 14px;border-radius:9px;text-decoration:none;font-size:13px;transition:.15s}
+  a.dl:hover{border-color:var(--accent);color:var(--accent)}
+  .hide{display:none !important}
+  .tag.own{color:#8b5cf6;border-color:#8b5cf655;background:#8b5cf612}
+  .out input{font:inherit;width:100%;padding:8px 11px;border:1px solid var(--line);border-radius:9px;
+             background:var(--panel);color:var(--text);font-size:12.5px;
+             font-family:ui-monospace,Menlo,Consolas,monospace}
+  .out input:focus{outline:none;border-color:var(--accent)}
+  .out .tip{font-size:12.5px;color:var(--dim);margin-top:8px;line-height:1.6}
+  .out .tip code{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:1px 6px}
+
+  /* ---------- 更新：顶部横幅 ---------- */
+  .banner{display:flex;align-items:center;gap:12px;padding:12px 16px;margin-bottom:16px;
+          border:1px solid #3b7cf055;border-radius:var(--radius);box-shadow:var(--shadow);
+          background:linear-gradient(135deg,#3b7cf014,#17a8d610)}
+  .banner .ic{width:34px;height:34px;border-radius:10px;flex:0 0 auto;display:flex;align-items:center;
+              justify-content:center;color:#fff;font-weight:700;font-size:17px;
+              background:linear-gradient(135deg,var(--accent),var(--accent2))}
+  .banner .tx{flex:1;min-width:0}
+  .banner .tx b{font-size:14px}
+  .banner .tx p{margin:2px 0 0;font-size:12.5px;color:var(--dim);
+                overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+  /* ---------- 更新：弹窗 / 强制遮罩 ---------- */
+  .modal{position:fixed;inset:0;z-index:60;background:rgba(16,22,36,.5);
+         display:flex;align-items:center;justify-content:center;padding:20px}
+  .modal.forced{z-index:200;background:rgba(11,16,26,.78);backdrop-filter:blur(3px)}
+  .dlg{width:100%;max-width:620px;max-height:88vh;display:flex;flex-direction:column;overflow:hidden;
+       background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+       box-shadow:0 20px 60px rgba(10,16,30,.4)}
+  .modal.forced .dlg{border-color:#d98324aa}
+  .dlgh{display:flex;align-items:center;gap:10px;padding:13px 16px;flex-wrap:wrap;
+        border-bottom:1px solid var(--line);background:var(--panel2)}
+  .dlgh h2{margin:0;font-size:15px;font-weight:650;flex:1;min-width:0}
+  .dlgb{padding:14px 16px;overflow:auto}
+  .dlgf{display:flex;gap:10px;justify-content:flex-end;padding:12px 16px;flex-wrap:wrap;
+        border-top:1px solid var(--line);background:var(--panel2)}
+  .forcedbar{padding:9px 16px;font-size:12.5px;color:var(--warn);
+             background:#d9770614;border-bottom:1px solid var(--line)}
+  .kv{font-size:13px;color:var(--dim);margin-bottom:9px}
+  .kv b{color:var(--text)}
+  .kv .up{color:var(--accent)}
+  .meta{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+  .chip{font-size:11.5px;color:var(--dim);background:var(--panel2);border:1px solid var(--line);
+        border-radius:20px;padding:2px 10px;text-decoration:none;display:inline-block}
+  a.chip:hover{border-color:var(--accent);color:var(--accent)}
+  .notes{font-size:13px;line-height:1.7;white-space:pre-wrap;word-break:break-word;margin-bottom:10px;
+         background:var(--panel2);border:1px solid var(--line);border-radius:10px;
+         padding:10px 12px;max-height:220px;overflow:auto}
+  .dlgb .stat{padding:0 0 8px}
+  .dlgb .bar{margin:0 0 10px}
+  .dlgb pre.log{padding:9px 11px;max-height:150px;background:var(--panel2);
+                border:1px solid var(--line);border-radius:10px}
+  .dlgb .msg{padding:8px 0 0}
+  body.locked .wrap{pointer-events:none;user-select:none;filter:blur(1.5px)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <img src="__BASE__images/64.png" alt="">
+    <div>
+      <h1>应用提取器</h1>
+      <p>把应用中心已安装的应用，还原成可离线安装的 .fpk</p>
+    </div>
+    <div class="out">
+      <div>输出目录 <span class="tag own hide" id="outcustom">自定义</span>
+        <button class="ghost" id="btn-out">更改</button></div>
+      <code id="outdir">…</code>
+      <div class="verline">
+        当前版本 <b id="ver">…</b>
+        <span class="hide busy" id="verprog"></span>
+        <button class="ghost" id="btn-updcheck">检查更新</button>
+      </div>
+      <div class="vmsg hide" id="vermsg" title=""></div>
+    </div>
+  </header>
+
+  <div class="banner hide" id="updbanner">
+    <div class="ic">↑</div>
+    <div class="tx">
+      <b>发现新版本 <span id="bannerver"></span></b>
+      <p id="bannertip"></p>
+    </div>
+    <button class="primary" id="btn-bannerupd">查看更新</button>
+  </div>
+
+  <div class="card hide" id="outcard">
+    <div class="head">
+      <h2>设置输出目录</h2>
+      <div class="spacer"></div>
+      <button class="ghost" id="btn-outdefault">恢复默认</button>
+      <button class="ghost" id="btn-outcancel">取消</button>
+      <button class="primary" id="btn-outsave">保存</button>
+    </div>
+    <div class="out" style="padding:12px 16px 16px">
+      <input id="outinput" placeholder="/vol1/备份/fpk" spellcheck="false" autocomplete="off">
+      <div class="tip">填<b>绝对路径</b>，例如 <code>/vol1/备份/fpk</code>；目录不存在会自动创建。
+        点「恢复默认」回到共享文件夹 <b>fpk-extractor</b>。</div>
+      <div class="msg err hide" id="outmsg" style="padding:8px 0 0"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="head">
+      <h2>已安装应用</h2>
+      <span class="count" id="count"></span>
+      <div class="spacer"></div>
+      <button class="ghost" id="btn-refresh">刷新</button>
+      <button id="btn-all">全选</button>
+      <button class="primary" id="btn-run" disabled>开始提取</button>
+    </div>
+    <div class="body">
+      <ul class="apps" id="list"><li class="empty">正在扫描…</li></ul>
+    </div>
+  </div>
+
+  <div class="card hide" id="jobcard">
+    <div class="head">
+      <h2>提取进度</h2>
+      <span class="count" id="jobcount"></span>
+      <div class="spacer"></div>
+      <button class="ghost" id="btn-log">显示日志</button>
+      <button class="ghost" id="btn-cancel">中止</button>
+    </div>
+    <div class="stat">
+      <span class="dot" id="jobdot"></span>
+      <span id="jobphase">准备中…</span>
+      <span class="cur" id="jobcur"></span>
+    </div>
+    <div class="bar"><i id="jobbar"></i></div>
+    <div class="msg hide" id="jobmsg"></div>
+    <pre class="log hide" id="joblog"></pre>
+  </div>
+
+  <div class="card" id="filescard">
+    <div class="head">
+      <h2>已导出的安装包</h2>
+      <div class="spacer"></div>
+      <button class="ghost" id="btn-files">刷新</button>
+    </div>
+    <div class="body" id="filesbody"><div class="empty">暂无文件</div></div>
+    <div class="hint">也可以在「文件管理器」→ 共享文件夹 <b id="sharename">fpk-extractor</b> 里查看，或通过 SMB 拷贝。</div>
+  </div>
+
+</div>
+
+<!-- ============ 更新弹窗（update_mode=forced 时变成不可关闭的遮罩） ============ -->
+<div class="modal hide" id="upddlg">
+  <div class="dlg">
+    <div class="dlgh">
+      <h2 id="updtitle">发现新版本</h2>
+      <button class="ghost" id="btn-updclose">关闭</button>
+    </div>
+    <div class="forcedbar hide" id="updforcedbar">
+      该版本被标记为强制更新：完成更新前无法继续使用本应用。
+    </div>
+    <div class="dlgb">
+      <div class="kv">当前 <b id="updfrom"></b> → 新版本 <b class="up" id="updto"></b></div>
+      <div class="meta" id="updmeta"></div>
+      <div class="notes" id="updnotes"></div>
+      <div class="forcedbar hide" id="updprev" style="border-radius:10px;border:1px solid var(--line);margin-bottom:10px"></div>
+      <div id="updprog" class="hide">
+        <div class="stat">
+          <span class="dot" id="upddot"></span>
+          <span id="updphase"></span>
+          <span class="cur" id="updcur"></span>
+        </div>
+        <div class="bar"><i id="updbar"></i></div>
+        <pre class="log" id="updlog"></pre>
+      </div>
+      <div class="msg hide" id="updmsg"></div>
+    </div>
+    <div class="dlgf">
+      <button class="ghost" id="btn-updonlydl">仅下载</button>
+      <button class="ghost" id="btn-updlater">稍后再说</button>
+      <button class="primary" id="btn-updnow">立即更新</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+/* 服务端注入的访问前缀：
+   直连 TCP   -> "/"
+   统一网关   -> "/app/fpk-extractor/"
+   一份前端两种模式通吃。 */
+const BASE = "__BASE__";
+let APPS = [], SEL = new Set(), JOB = null, POLL = null, SIZE_POLL = null, LOG_OPEN = false;
+let OUT = '', OUT_CUSTOM = false;
+/* 更新相关状态 */
+let UPD = {}, USTAT = {}, UPOLL = null, UPTARGET = '';
+
+async function api(path, opts){
+  const url = BASE + String(path).replace(/^\/+/, '');
+  const r = await fetch(url, Object.assign({headers:{'Content-Type':'application/json'}}, opts||{}));
+  return r.json();
+}
+const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const firstLine = s => String(s==null?'':s).split('\n').map(x=>x.trim()).filter(Boolean)[0] || '';
+
+/* ==================================================================
+   输出目录：默认在共享文件夹，允许用户改成任意本地绝对路径
+   ================================================================== */
+function applyOut(d){
+  if (d && d.out) OUT = d.out;
+  OUT_CUSTOM = !!(d && d.custom);
+  $('#outdir').textContent = OUT || '-';
+  $('#outcustom').classList.toggle('hide', !OUT_CUSTOM);
+}
+
+function outMsg(text, isErr){
+  const m = $('#outmsg');
+  m.textContent = text || '';
+  m.className = 'msg err' + (text ? '' : ' hide');
+}
+
+async function saveOut(dir){
+  const d = await api('/api/setout', {method:'POST', body: JSON.stringify({dir: dir})});
+  if (!d.ok){ outMsg(d.error || '保存失败'); return false; }
+  applyOut(d);
+  await loadFiles();
+  return true;
+}
+
+/* ==================================================================
+   应用列表 / 提取任务
+   ================================================================== */
+async function loadApps(){
+  try{
+    const d = await api('/api/apps');
+    APPS = d.apps || [];
+    applyOut(d);
+    SEL = new Set([...SEL].filter(n => APPS.some(a => a.name === n)));
+    renderApps();
+    if (APPS.some(a => a.size == null) && !SIZE_POLL){
+      SIZE_POLL = setInterval(async () => {
+        const r = await api('/api/apps');
+        APPS = r.apps || APPS; renderApps();
+        if (!APPS.some(a => a.size == null)){ clearInterval(SIZE_POLL); SIZE_POLL = null; }
+      }, 2500);
+    }
+  }catch(e){ $('#list').innerHTML = '<li class="empty">扫描失败：'+esc(e.message)+'</li>'; }
+}
+
+function renderApps(){
+  const l = $('#list');
+  if (!APPS.length){ l.innerHTML = '<li class="empty">没有扫描到已安装的应用</li>'; $('#count').textContent=''; updateRun(); return; }
+  l.innerHTML = APPS.map(a => `
+    <li>
+      <input type="checkbox" data-n="${esc(a.name)}" ${SEL.has(a.name)?'checked':''}>
+      <div class="nm">
+        <div class="t">${esc(a.display_name)}
+          <span class="tag ${esc(a.platform)}">${esc(a.platform)}</span>
+          ${a.ok?'':'<span class="tag" style="color:var(--warn)">无 target</span>'}
+        </div>
+        <div class="s">${esc(a.name)} · v${esc(a.version)}</div>
+      </div>
+      <div class="size">${a.size==null?'计算中…':esc(bytes(a.size))}</div>
+    </li>`).join('');
+  l.querySelectorAll('input[type=checkbox]').forEach(cb => {
+    cb.onchange = () => { cb.checked ? SEL.add(cb.dataset.n) : SEL.delete(cb.dataset.n); updateRun(); };
+  });
+  $('#count').textContent = `共 ${APPS.length} 个应用`;
+  updateRun();
+}
+
+function updateRun(){
+  const n = SEL.size, b = $('#btn-run');
+  b.disabled = n === 0 || (JOB && JOB.running);
+  b.textContent = n ? `开始提取（${n}）` : '开始提取';
+}
+
+function bytes(n){
+  if (n == null) return '';
+  const u = ['B','KB','MB','GB','TB']; let i = 0, v = n;
+  while (v >= 1024 && i < u.length-1){ v /= 1024; i++; }
+  return (i===0 ? v : v.toFixed(1)) + ' ' + u[i];
+}
+
+function ensurePoll(){ if (!POLL) POLL = setInterval(pollJob, 1000); }
+
+async function startExtract(){
+  const apps = [...SEL];
+  if (!apps.length) return;
+  const d = await api('/api/extract', {method:'POST', body: JSON.stringify({apps})});
+  if (!d.ok){ alert(d.error || '启动失败'); return; }
+  $('#outcard').classList.add('hide');
+  $('#jobcard').classList.remove('hide');
+  ensurePoll(); pollJob();
+}
+
+async function pollJob(){
+  try{ JOB = await api('/api/job'); }catch(e){ return; }
+  renderJob();
+  if (JOB.running){ ensurePoll(); return; }
+  if (POLL){                       // 任务刚结束
+    clearInterval(POLL); POLL = null;
+    renderFiles(JOB.files);
+    if (JOB.phase === 'done') loadApps();
+  }
+}
+
+function renderJob(){
+  if (!JOB) return;
+  const j = JOB;
+  $('#jobcount').textContent = `成功 ${j.done} · 失败 ${j.failed}`;
+  $('#jobphase').textContent = j.running ? '提取中…' : (j.phase === 'done' ? '已完成' : (j.phase==='error' ? '已中断' : '空闲'));
+  $('#jobdot').className = 'dot' + (j.running ? ' run' : '');
+  $('#jobcur').textContent = j.current ? '正在处理：' + j.current : '';
+  const pct = j.total ? Math.min(100, Math.round(j.done * 100 / j.total)) : (j.running ? 6 : (j.phase==='done'?100:0));
+  $('#jobbar').style.width = pct + '%';
+  $('#btn-cancel').disabled = !j.running;
+  const m = $('#jobmsg');
+  if (j.message){ m.textContent = j.message; m.className = 'msg ' + (j.phase==='error'?'err':'ok'); m.classList.remove('hide'); }
+  else m.classList.add('hide');
+  const lg = $('#joblog');
+  if (LOG_OPEN){ lg.textContent = (j.log||[]).join('\n'); lg.scrollTop = lg.scrollHeight; }
+}
+
+/* ==================================================================
+   已导出的安装包
+   ================================================================== */
+function renderFiles(files){
+  const b = $('#filesbody');
+  if (!files || !files.length){ b.innerHTML = '<div class="empty">暂无文件</div>'; return; }
+  b.innerHTML = `<table class="files">${files.map(f=>`
+    <tr>
+      <td class="f">${esc(f.file)}</td>
+      <td class="r" style="color:var(--dim)">${esc(f.size)}</td>
+      <td class="r"><a class="dl" href="${BASE}api/download?f=${encodeURIComponent(f.file)}">下载</a></td>
+    </tr>`).join('')}</table>`;
+}
+
+async function loadFiles(){
+  const d = await api('/api/files');
+  renderFiles(d.files);
+  applyOut(d);
+}
+
+/* ==================================================================
+   应用更新（对接「fnOS 应用更新管理器」）
+   界面上只暴露「检查更新」——不给用户任何配置入口。
+   - GET  /api/update            是否可用（公开接口，无需登录）
+   - POST /api/update/download   仅下载 + 校验
+   - POST /api/update/apply      下载 + 校验 + 安装 + 重启
+   - GET  /api/update/status     进度 / 结果
+   ================================================================== */
+const upd = {
+  avail(){ return !!UPD.update_available; },
+  forced(){ return this.avail() && UPD.update_mode === 'forced'; }
+};
+
+function updMsg(text, cls){
+  const m = $('#updmsg');
+  m.textContent = text || '';
+  m.className = 'msg' + (cls ? ' ' + cls : '') + (text ? '' : ' hide');
+}
+
+/* ---------- 检查更新 ---------- */
+let VMSG_T = null;
+
+/* 「检查更新」的结果：没有设置面板了，反馈就显示在按钮下方 */
+function verMsg(text, cls){
+  const el = $('#vermsg');
+  el.textContent = text || '';
+  el.className = 'vmsg' + (cls ? ' ' + cls : '') + (text ? '' : ' hide');
+  el.title = text || '';
+  if (VMSG_T){ clearTimeout(VMSG_T); VMSG_T = null; }
+  // 正常结果几秒后自动收走；出错就留着，让用户看得见
+  if (text && cls !== 'err' && cls !== 'warn'){
+    VMSG_T = setTimeout(() => el.classList.add('hide'), 15000);
+  }
+}
+
+/* force=true 表示用户手动点了「检查更新」，这时必须给出明确反馈；
+   打开应用时的自动检查则安静进行，不打扰。 */
+async function runCheck(force){
+  if (force) verMsg('正在检查…', '');
+  $('#btn-updcheck').disabled = true;
+  let d;
+  try{ d = await api('/api/update' + (force ? '?force=1' : '')); }
+  catch(e){ d = {ok:false, update_available:false, error:'检查更新失败：' + e.message}; }
+  $('#btn-updcheck').disabled = false;
+  UPD = d || {};
+  if (UPD.current_version) $('#ver').textContent = 'v' + UPD.current_version;
+
+  const avail  = upd.avail();
+  const forced = upd.forced();
+
+  // 顶部横幅（强制更新时由遮罩接管，不再显示横幅）
+  $('#updbanner').classList.toggle('hide', !(avail && !forced));
+  if (avail && !forced){
+    $('#bannerver').textContent = 'v' + (UPD.version || '');
+    $('#bannertip').textContent = firstLine(UPD.release_notes) || '点击查看更新说明';
+  }
+
+  if (forced) openUpd(true);          // 按更新管理器的要求锁住界面
+
+  if (force){
+    if (UPD.key_missing){                      // 管理器不认这个 app_key
+      verMsg(UPD.error, 'err');
+    } else if (UPD.ok === false || UPD.error){ // 连不上 / 其它错误
+      verMsg(UPD.error || '连不上更新管理器', 'warn');
+    } else if (avail){
+      verMsg('发现新版本 v' + UPD.version, 'info');
+    } else {
+      verMsg('已是最新版本' + (UPD.software ? '（' + UPD.software + '）' : ''), 'ok');
+    }
+  }
+  return UPD;
+}
+
+/* ---------- 更新弹窗 / 强制遮罩 ---------- */
+function openUpd(forced){
+  if (!upd.avail()) return;
+  const f = !!forced || upd.forced();
+  const box = $('#upddlg');
+  box.classList.remove('hide');
+  box.classList.toggle('forced', f);
+  $('#updforcedbar').classList.toggle('hide', !f);
+  $('#btn-updclose').classList.toggle('hide', f);
+  $('#btn-updlater').classList.toggle('hide', f);
+
+  $('#updtitle').textContent = (UPD.software ? UPD.software + ' ' : '') + '发现新版本';
+  $('#updfrom').textContent = 'v' + (UPD.current_version || '?');
+  $('#updto').textContent = 'v' + (UPD.version || '?');
+  $('#updnotes').textContent = UPD.release_notes || '（本次更新未提供说明）';
+
+  const chips = [];
+  if (UPD.size) chips.push(bytes(UPD.size));
+  chips.push(UPD.channel || 'stable');
+  if (UPD.min_version) chips.push('需 ≥ v' + UPD.min_version);
+  if (UPD.requires_restart) chips.push('安装后需重启应用');
+  let html = chips.map(c => '<span class="chip">' + esc(c) + '</span>').join('');
+  if (!UPD.direct_url && UPD.cloud_url){
+    html += '<a class="chip" href="' + esc(UPD.cloud_url) + '" target="_blank" rel="noopener">前往下载页</a>';
+  }
+  $('#updmeta').innerHTML = html;
+
+  const hasDl = !!UPD.direct_url;
+  $('#btn-updnow').disabled = !hasDl;
+  $('#btn-updonlydl').disabled = !hasDl;
+  $('#btn-updonlydl').classList.toggle('hide', !hasDl);
+  if (!hasDl){
+    updMsg('更新管理器只提供了网盘链接，请从上面的下载页手动获取安装包。', 'warn');
+  } else {
+    updMsg('');
+  }
+
+  // 上一次更新没装成功的话，在这里如实说明（不另外做设置面板）
+  const pend = USTAT.pending;
+  const stale = !!(pend && pend.version && pend.version !== USTAT.current_version
+                   && !UPTARGET);
+  $('#updprev').classList.toggle('hide', !stale);
+  if (stale){
+    $('#updprev').textContent = '上次更新到 v' + pend.version + ' 没有装成功。'
+      + (USTAT.cli
+          ? '可以再试一次；若反复失败，请到「应用中心 → 手动安装」选择 updates 目录里的安装包。'
+          : '本机没找到 appcenter-cli，无法自动安装，请到「应用中心 → 手动安装」手动安装。');
+  }
+
+  if (f) document.body.classList.add('locked');
+  renderUpdStatus(USTAT);
+}
+
+function closeUpd(){
+  if (upd.forced()) return;                 // 强制更新：不允许关闭
+  const box = $('#upddlg');
+  if (box.classList.contains('hide')) return;
+  box.classList.add('hide');
+  box.classList.remove('forced');
+  document.body.classList.remove('locked');
+}
+
+/* ---------- 进度 / 状态 ---------- */
+function renderUpdStatus(s){
+  USTAT = s || {};
+  if (s && s.current_version) $('#ver').textContent = 'v' + s.current_version;
+
+  const running = !!s.running;
+  const phase = s.phase || '';
+  const pct = s.total ? Math.min(100, Math.round((s.progress || 0) * 100 / s.total))
+                      : ((phase === '已就绪' || phase === '安装中') ? 100 : 0);
+  $('#updbar').style.width = pct + '%';
+  $('#upddot').className = 'dot' + (running ? ' run' : '');
+  $('#updphase').textContent = phase || '空闲';
+  $('#updcur').textContent = s.total ? (bytes(s.progress) + ' / ' + bytes(s.total)) : (s.file || '');
+  $('#updlog').textContent = (s.log || []).join('\n');
+  $('#updprog').classList.toggle('hide', !(running || phase));
+
+  // 头部版本行右侧的小提示
+  const vp = $('#verprog');
+  if (running){
+    vp.textContent = '· ' + phase + (s.total ? ' ' + pct + '%' : '');
+    vp.classList.remove('hide');
+  } else if (phase === '已就绪'){
+    vp.textContent = '· 已下载待安装';
+    vp.classList.remove('hide');
+  } else {
+    vp.classList.add('hide');
+  }
+
+  // 按钮文案随阶段变化
+  $('#btn-updnow').textContent = (phase === '已就绪') ? '安装并重启' : '立即更新';
+  const busy = running || phase === '安装中';
+  $('#btn-updnow').disabled = busy || !UPD.direct_url;
+  $('#btn-updonlydl').disabled = busy || !UPD.direct_url;
+
+  if (phase === '失败' && s.error) updMsg(s.error, 'err');
+  else if (phase === '安装中') updMsg('安装命令已启动，应用即将重启，请稍候…', 'ok');
+  else if (phase === '已就绪') updMsg('安装包已下载并校验通过，可以安装了。', 'ok');
+}
+
+function startUpdPoll(ms){
+  if (UPOLL) clearInterval(UPOLL);
+  UPOLL = setInterval(pollUpd, ms || 1000);
+}
+function stopUpdPoll(){ if (UPOLL){ clearInterval(UPOLL); UPOLL = null; } }
+
+async function pollUpd(){
+  let s;
+  try{ s = await api('/api/update/status'); }
+  catch(e){                                   // 安装中应用会短暂不可访问
+    if (UPTARGET) $('#updphase').textContent = '应用正在重启…';
+    return;
+  }
+  renderUpdStatus(s);
+  if (UPTARGET && s.current_version === UPTARGET){       // 版本已追平，更新成功
+    localStorage.removeItem('upd-to');
+    UPTARGET = '';
+    stopUpdPoll();
+    $('#updmsg').className = 'msg ok';
+    $('#updmsg').textContent = '更新完成，正在重新加载…';
+    setTimeout(() => location.reload(), 1200);
+    return;
+  }
+  if (!s.running && s.phase !== '安装中') stopUpdPoll();
+}
+
+/* ---------- 触发下载 / 安装 ---------- */
+async function startDownload(){
+  updMsg('');
+  let d;
+  try{ d = await api('/api/update/download', {method:'POST'}); }
+  catch(e){ updMsg('请求失败：' + e.message, 'err'); return; }
+  if (!d.ok){ updMsg(d.error || '无法开始下载', 'err'); return; }
+  renderUpdStatus(d.status || {});
+  startUpdPoll(900);
+}
+
+async function startApply(){
+  updMsg('');
+  let d;
+  try{ d = await api('/api/update/apply', {method:'POST'}); }
+  catch(e){ updMsg('请求失败：' + e.message, 'err'); return; }
+  if (!d.ok){ updMsg(d.error || '无法开始更新', 'err'); return; }
+  UPTARGET = UPD.version || '';
+  if (UPTARGET) localStorage.setItem('upd-to', UPTARGET);
+  renderUpdStatus(d.status || {});
+  startUpdPoll(900);
+}
+
+function updateNow(){
+  if (!UPD.direct_url) return;
+  const oneShot = !UPD.config || UPD.config.auto_install;
+  if (UPTARGET) return;                       // 已在更新流程里
+  if (oneShot) return startApply();
+  // 未开启「一步到位」：先下载，下载好后再由用户点「安装并重启」
+  if (USTAT.phase === '已就绪') return startApply();
+  return startDownload();
+}
+
+/* ==================================================================
+   事件绑定
+   ================================================================== */
+$('#btn-refresh').onclick = () => { SEL.clear(); loadApps(); loadFiles(); };
+$('#btn-files').onclick = loadFiles;
+$('#btn-all').onclick = () => {
+  const all = SEL.size === APPS.length;
+  SEL = all ? new Set() : new Set(APPS.map(a => a.name));
+  renderApps();
+};
+$('#btn-run').onclick = startExtract;
+$('#btn-log').onclick = () => { LOG_OPEN = !LOG_OPEN; $('#joblog').classList.toggle('hide', !LOG_OPEN);
+  $('#btn-log').textContent = LOG_OPEN ? '隐藏日志' : '显示日志'; renderJob(); };
+$('#btn-cancel').onclick = async () => { if (confirm('确定中止当前提取任务？')) await api('/api/cancel', {method:'POST'}); };
+
+$('#btn-out').onclick = () => {
+  $('#outinput').value = OUT || '';
+  outMsg('');
+  $('#outcard').classList.remove('hide');
+  $('#outinput').focus(); $('#outinput').select();
+};
+$('#btn-outcancel').onclick = () => { $('#outcard').classList.add('hide'); outMsg(''); };
+$('#btn-outsave').onclick = async () => {
+  const dir = $('#outinput').value.trim();
+  if (!dir){ outMsg('请填写路径，或点「恢复默认」回到共享文件夹'); return; }
+  if (await saveOut(dir)) $('#outcard').classList.add('hide');
+};
+$('#btn-outdefault').onclick = async () => {
+  if (!OUT_CUSTOM){ outMsg('当前已经是默认输出目录'); return; }
+  if (confirm('恢复为默认输出目录（共享文件夹 fpk-extractor）？')) {
+    if (await saveOut('')) $('#outcard').classList.add('hide');
+  }
+};
+$('#outinput').addEventListener('keydown', e => {
+  if (e.key === 'Enter'){ e.preventDefault(); $('#btn-outsave').click(); }
+  if (e.key === 'Escape'){ e.preventDefault(); $('#btn-outcancel').click(); }
+});
+
+/* --- 更新 --- */
+$('#btn-updcheck').onclick = () => runCheck(true);
+$('#btn-bannerupd').onclick = () => openUpd(false);
+$('#btn-updclose').onclick = closeUpd;
+$('#btn-updlater').onclick = closeUpd;          // 强制更新时该按钮已被隐藏
+$('#btn-updnow').onclick = updateNow;
+$('#btn-updonlydl').onclick = startDownload;
+
+/* 点遮罩空白处关闭（强制更新时无效） */
+$('#upddlg').addEventListener('click', e => { if (e.target === $('#upddlg')) closeUpd(); });
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  if (!$('#upddlg').classList.contains('hide')) closeUpd();     // forced 时 closeUpd 会直接返回
+});
+
+/* ==================================================================
+   启动
+   ================================================================== */
+async function bootUpdate(){
+  // 刚更新完重启回来：告诉用户结果
+  const want = localStorage.getItem('upd-to');
+  let s = {};
+  try{ s = await api('/api/update/status'); }catch(e){ s = {}; }
+  USTAT = s;
+  if (s.current_version){
+    $('#ver').textContent = 'v' + s.current_version;
+    if (want && s.current_version === want){
+      localStorage.removeItem('upd-to');
+      $('#upddlg').classList.add('hide');
+      document.body.classList.remove('locked');
+      const b = $('#updbanner');
+      b.classList.remove('hide');
+      $('#bannerver').textContent = 'v' + want;
+      $('#bannertip').textContent = '更新完成，当前已是最新版本';
+      $('#btn-bannerupd').classList.add('hide');
+      setTimeout(() => { $('#updbanner').classList.add('hide'); $('#btn-bannerupd').classList.remove('hide'); }, 8000);
+    }
+  }
+  renderUpdStatus(s);
+  // 有任务在跑（或在等安装重启）就顺便盯着状态；但这不该挡住更新检查，
+  // 否则一旦状态卡在「安装中」，强制更新的遮罩就永远不会出现。
+  if (s.running || s.phase === '安装中') startUpdPoll(1500);
+
+  const cfg = s.config || {};
+  if (cfg.enabled !== false && cfg.check_on_open !== false){
+    await runCheck(false);
+  }
+}
+
+(async () => {
+  await loadApps();
+  await loadFiles();
+  await pollJob();          // 页面刷新后若任务仍在跑，自动接上进度
+  await bootUpdate();       // 检查更新 / 恢复上次的更新状态
+})();
+</script>
+</body>
+</html>

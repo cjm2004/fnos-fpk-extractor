@@ -1,0 +1,38 @@
+# ============================================================================
+#  换行符策略 —— 这个文件对本项目**至关重要**，别删
+#
+#  fnOS 的生命周期脚本（cmd/*）与提取引擎（app/bin/*）必须是 **LF**。
+#  它们在 Linux 上执行，带 CRLF 会直接报 `bad interpreter: /bin/bash^M` 之类的错。
+#  如果 Windows 上 clone 时被 git 自动转成 CRLF，重新 bash build.sh 打出来的包
+#  就是坏的 —— 而且装到 NAS 上才会暴露，很难查。
+#
+#  所以：所有文本文件统一按 LF 检出。
+# ============================================================================
+
+# 默认：由 git 判断是否文本，文本一律以 LF 检出
+* text=auto eol=lf
+
+# 明确必须 LF 的可执行脚本
+cmd/*          text eol=lf
+app/bin/*      text eol=lf
+*.sh           text eol=lf
+build.sh       text eol=lf
+source/fpk-extractor/cmd/*    text eol=lf
+source/fpk-extractor/app/bin/* text eol=lf
+
+# 二进制：禁止任何换行符转换
+*.fpk   binary
+*.tgz   binary
+*.gz    binary
+*.zip   binary
+*.exe   binary
+*.PNG   binary
+*.png   binary
+*.jpg   binary
+*.ico   binary
+
+# 让 GitHub 语言统计/差异显示更准确
+source/fpk-extractor/app/www/index.html  linguist-language=HTML
+source/fpk-extractor/app/server/server.py linguist-language=Python
+source/fpk-extractor/app/bin/fpk-extract  linguist-language=Shell
+source/fpk-extractor/app/bin/fallback/*   linguist-detectable=false
