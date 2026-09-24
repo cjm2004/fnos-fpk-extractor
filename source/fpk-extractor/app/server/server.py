@@ -825,6 +825,17 @@ def update_status():
 
 
 # ------------------------------------------------------------------ HTTP
+# /images/ 下现在既有图标也有捐赠二维码，不能一律按 image/png 发
+MIME = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".svg": "image/svg+xml",
+}
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "fpk-extractor"
 
@@ -954,7 +965,8 @@ class Handler(BaseHTTPRequestHandler):
         for root in (os.path.join(WWW_DIR, "images"), ICON_DIR):
             fp = os.path.join(root, fn)
             if os.path.isfile(fp):
-                return self._send_file(fp, "image/png")
+                return self._send_file(fp, MIME.get(
+                    os.path.splitext(fn)[1].lower(), "application/octet-stream"))
         return self._send(404, "no icon", "text/plain; charset=utf-8")
 
     def _download(self, fn):

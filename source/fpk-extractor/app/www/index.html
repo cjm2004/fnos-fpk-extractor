@@ -155,6 +155,17 @@
                 border:1px solid var(--line);border-radius:10px}
   .dlgb .msg{padding:8px 0 0}
   body.locked .wrap{pointer-events:none;user-select:none;filter:blur(1.5px)}
+
+  /* ---------- 捐赠 ---------- */
+  .donate{display:flex;gap:14px}
+  .donate figure{margin:0;flex:1 1 0;min-width:0;text-align:center}
+  /* 二维码需要白底，固定高度让两张卡片一样高 */
+  .donate img{display:block;width:100%;height:300px;object-fit:contain;background:#fff;
+              border:1px solid var(--line);border-radius:12px}
+  .donate a{display:block;border-radius:12px}
+  .donate a:hover img{border-color:var(--accent)}
+  .donate figcaption{margin-top:8px;font-size:12.5px;color:var(--dim)}
+  .dnote{margin:16px 0 0;font-size:12.5px;color:var(--dim);text-align:center;line-height:1.7}
 </style>
 </head>
 <body>
@@ -174,6 +185,7 @@
         当前版本 <b id="ver">…</b>
         <span class="hide busy" id="verprog"></span>
         <button class="ghost" id="btn-updcheck">检查更新</button>
+        <button class="ghost" id="btn-donate">捐赠</button>
       </div>
       <div class="vmsg hide" id="vermsg" title=""></div>
     </div>
@@ -278,6 +290,33 @@
       <button class="ghost" id="btn-updonlydl">仅下载</button>
       <button class="ghost" id="btn-updlater">稍后再说</button>
       <button class="primary" id="btn-updnow">立即更新</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 捐赠 ============ -->
+<div class="modal hide" id="donatedlg">
+  <div class="dlg">
+    <div class="dlgh">
+      <h2>捐赠支持</h2>
+      <div class="spacer"></div>
+      <button class="ghost" id="btn-donclose">关闭</button>
+    </div>
+    <div class="dlgb">
+      <div class="donate">
+        <figure>
+          <a href="__BASE__images/donate-wechat.png" target="_blank" rel="noopener">
+            <img src="__BASE__images/donate-wechat.png" alt="微信支付收款码"></a>
+          <figcaption>微信支付</figcaption>
+        </figure>
+        <figure>
+          <a href="__BASE__images/donate-alipay.png" target="_blank" rel="noopener">
+            <img src="__BASE__images/donate-alipay.png" alt="支付宝收款码"></a>
+          <figcaption>支付宝</figcaption>
+        </figure>
+      </div>
+      <p class="dnote">如果这个工具帮到了你，可以请作者喝杯咖啡。<br>
+        扫码即可，金额随意。点图片可放大。</p>
     </div>
   </div>
 </div>
@@ -720,10 +759,20 @@ $('#btn-updlater').onclick = closeUpd;          // 强制更新时该按钮已�
 $('#btn-updnow').onclick = updateNow;
 $('#btn-updonlydl').onclick = startDownload;
 
+/* --- 捐赠 --- */
+function closeDonate(){ $('#donatedlg').classList.add('hide'); }
+$('#btn-donate').onclick = () => $('#donatedlg').classList.remove('hide');
+$('#btn-donclose').onclick = closeDonate;
+$('#donatedlg').addEventListener('click', e => {
+  if (e.target === $('#donatedlg')) closeDonate();
+});
+
 /* 点遮罩空白处关闭（强制更新时无效） */
 $('#upddlg').addEventListener('click', e => { if (e.target === $('#upddlg')) closeUpd(); });
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
+  // 捐赠窗在最上层，先关它
+  if (!$('#donatedlg').classList.contains('hide')){ closeDonate(); return; }
   if (!$('#upddlg').classList.contains('hide')) closeUpd();     // forced 时 closeUpd 会直接返回
 });
 
