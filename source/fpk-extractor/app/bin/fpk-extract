@@ -30,7 +30,7 @@ export LC_ALL=C
 set -u
 
 SELF_NAME="fpk-extractor"
-ENGINE_VER="1.0.0"
+ENGINE_VER="1.0.1"
 APPS_ROOT="${APPS_ROOT:-/var/apps}"
 
 SCOPE="all"

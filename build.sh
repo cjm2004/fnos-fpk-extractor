@@ -16,16 +16,17 @@ SRC="$ROOT/source/fpk-extractor"
 
 # ---------------------------------------------------------------- 找 fnpack
 FN=""
-for c in "$ROOT/tools/fnpack.exe" "$ROOT/tools/fnpack"; do
-    if [ -x "$c" ]; then FN="$c"; break; fi
-done
+# 优先用 PATH 里的原生 fnpack（Linux / macOS）；没有才退回 tools/ 里的官方二进制
+if command -v fnpack >/dev/null 2>&1; then
+    FN="$(command -v fnpack)"
+else
+    for c in "$ROOT/tools/fnpack.exe" "$ROOT/tools/fnpack"; do
+        if [ -x "$c" ]; then FN="$c"; break; fi
+    done
+fi
 if [ -z "$FN" ]; then
-    if command -v fnpack >/dev/null 2>&1; then
-        FN="$(command -v fnpack)"
-    else
-        echo "错误：未找到 fnpack。请把 fnpack 放到 tools/ 目录，或安装到 PATH。" >&2
-        exit 1
-    fi
+    echo "错误：未找到 fnpack。请把 fnpack 放到 tools/ 目录，或安装到 PATH。" >&2
+    exit 1
 fi
 echo "使用打包工具：$FN"
 

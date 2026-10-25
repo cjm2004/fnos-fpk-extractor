@@ -425,8 +425,14 @@ UPD_DIR = os.path.join(VAR_DIR, "updates")
 UPD_PENDING = os.path.join(VAR_DIR, "update.pending")
 UPD_DEFAULT = {
     "enabled": True,
-    "base_url": "http://nas.192321.xyz:18080",
-    "fallback_url": "http://127.0.0.1:18080",     # 管理器就跑在本机，域名解析不通时兜底
+    # 三个更新服务器都要探测：全通则选下载最快的；全不通则引导用户去 GitHub。
+    "server_urls": [
+        "http://nas1.192321.xyz:18080",
+        "http://nas.192321.xyz:18080",
+        "http://nas.192322.xyz:18080",
+    ],
+    "github_url": "https://github.com/cjm2004/fnos-fpk-extractor/releases",
+    "github_api": "https://api.github.com/repos/cjm2004/fnos-fpk-extractor/releases/latest",
     "app_key": "fpk-extractor",
     "channel": "stable",
     "check_on_open": True,
@@ -470,8 +476,23 @@ def load_update_conf():
             for k in UPD_DEFAULT:
                 if k in d:
                     cfg[k] = d[k]
+            # 兼容旧版配置：base_url / fallback_url 自动并进 server_urls
+            if "server_urls" not in d:
+                urls = []
+                for k in ("base_url", "fallback_url"):
+                    v = normalize_base(d.get(k) or "")
+                    if v and v not in urls:
+                        urls.append(v)
+                if urls:
+                    cfg["server_urls"] = urls
     except (OSError, ValueError):
         pass
+    # 规范化 server_urls；一个都没有就退回内置默认
+    urls = [normalize_base(u) for u in (cfg.get("server_urls") or [])]
+    cfg["server_urls"] = [u for u in urls if u]
+    if not cfg["server_urls"]:
+        cfg["server_urls"] = list(UPD_DEFAULT["server_urls"])
+    cfg["github_url"] = (cfg.get("github_url") or "").strip() or UPD_DEFAULT["github_url"]
     return cfg
 
 
@@ -481,9 +502,9 @@ def public_update_cfg(cfg=None):
     return dict(cfg or load_update_conf())
 
 
-def upd_bases(cfg):
+def upd_server_urls(cfg):
     out = []
-    for u in (cfg.get("base_url"), cfg.get("fallback_url")):
+    for u in (cfg.get("server_urls") or []):
         u = normalize_base(u)
         if u and u not in out:
             out.append(u)
@@ -500,15 +521,107 @@ def http_json(url, timeout=8):
     return json.loads(raw.decode("utf-8", "replace"))
 
 
+def ver_tuple(v):
+    """把 1.2.0 / v1.2.0 / 1.2 这类版本号拆成可比较的数字元组"""
+    parts = []
+    for piece in re.split(r"[^0-9]+", (v or "").strip().lstrip("vV")):
+        if piece:
+            try:
+                parts.append(int(piece))
+            except ValueError:
+                pass
+    return tuple(parts)
+
+
+def check_github(cfg, ver):
+    """查 GitHub 最新 release 的版本号（只读，失败不抛出）。"""
+    gh = {"url": cfg.get("github_url") or UPD_DEFAULT["github_url"],
+          "version": "", "newer": False, "asset_url": "", "release_url": "", "error": ""}
+    api = (cfg.get("github_api") or "").strip() or UPD_DEFAULT["github_api"]
+    try:
+        req = urllib.request.Request(api, headers={
+            "User-Agent": "fpk-extractor/%s" % ver,
+            "Accept": "application/vnd.github+json",
+        })
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = json.loads(resp.read().decode("utf-8", "replace"))
+        gh["release_url"] = (data.get("html_url") or "").strip()
+        gh["version"] = (data.get("tag_name") or "").strip()
+        for asset in (data.get("assets") or []):
+            if (asset.get("name") or "").lower().endswith(".fpk"):
+                gh["asset_url"] = asset.get("browser_download_url") or ""
+                break
+        gh["newer"] = bool(gh["version"]) and ver_tuple(gh["version"]) > ver_tuple(ver)
+    except Exception as exc:                          # noqa: BLE001
+        gh["error"] = str(exc)
+    return gh
+
+
+def probe_server(base, q):
+    """探测一个更新服务器。返回结构化结果，绝不抛出。"""
+    entry = {"url": base, "reachable": False, "elapsed": 0.0,
+             "error": "", "data": None, "speed": 0.0}
+    t0 = time.time()
+    try:
+        entry["data"] = http_json("%s/api/check-update?%s" % (base, q), timeout=6)
+        entry["reachable"] = True
+    except urllib.error.HTTPError as exc:
+        body = ""
+        try:
+            body = exc.read().decode("utf-8", "replace")
+            msg = (json.loads(body) or {}).get("error") or ""
+        except Exception:
+            msg = ""
+        entry["error"] = ("HTTP %s %s" % (exc.code, msg or body[:120].strip())).strip()
+    except Exception as exc:                          # noqa: BLE001
+        entry["error"] = str(exc)
+    entry["elapsed"] = round(time.time() - t0, 3)
+    return entry
+
+
+def probe_download_speed(url, timeout=6):
+    """下载直链前 256KB 估算速度（字节/秒），失败返回 0。
+       带 Range 头，服务端即使忽略 Range 也只会被读到 256KB 就断开。"""
+    if not (url or "").startswith(("http://", "https://")):
+        return 0.0
+    try:
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "fpk-extractor/%s" % cur_version(),
+            "Range": "bytes=0-262143",
+        })
+        got = 0
+        t0 = time.time()
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            while got < 262144:
+                chunk = resp.read(65536)
+                if not chunk:
+                    break
+                got += len(chunk)
+        dt = time.time() - t0
+        return got / dt if (dt > 0 and got > 0) else 0.0
+    except Exception:                                 # noqa: BLE001
+        return 0.0
+
+
+def _pick_fastest(candidates):
+    """有实测下载速度就比速度，否则比 check-update 响应时间。"""
+    with_speed = [r for r in candidates if r.get("speed") > 0]
+    if with_speed:
+        return max(with_speed, key=lambda r: r["speed"])
+    return min(candidates, key=lambda r: (r.get("elapsed") or 999.0))
+
+
 def check_update(force=False):
-    """问一次更新管理器。连不上/出错都返回结构化结果，绝不抛异常影响主功能。"""
+    """探测三个更新服务器 + GitHub：
+       · 三个服务器全都探测，能用的里面选下载最快的；
+       · 三个全不通时返回 github_only，让前端引导用户去 GitHub 下载。"""
     cfg = load_update_conf()
     ver = cur_version()
     if not cfg.get("enabled"):
         return {"ok": True, "enabled": False, "current_version": ver,
                 "update_available": False, "update_mode": "none",
-                "config": public_update_cfg(cfg),
-                "error": ""}
+                "github": check_github(cfg, ver), "servers": [],
+                "config": public_update_cfg(cfg), "error": ""}
 
     with UPD_LOCK:
         if (not force and UPD_CACHE["data"]
@@ -518,45 +631,86 @@ def check_update(force=False):
     key = cfg.get("app_key") or SELF
     chan = cfg.get("channel") or "stable"
     q = urllib.parse.urlencode({"app_key": key, "current_version": ver, "channel": chan})
-    # 三种结果要分清，不能一律当成「连不上」：
-    #   · 拿到 JSON        → 管理器认得这个 app_key
-    #   · HTTP 4xx + JSON  → 地址通、是我们自己的管理器，但它不认这个 app_key
-    #   · 其它异常         → 网络不通 / 域名解析失败 / 端口不通
-    data, used, last_err = None, "", ""
-    http_code, http_msg = 0, ""
-    for base in upd_bases(cfg):
-        try:
-            data = http_json("%s/api/check-update?%s" % (base, q))
-            used = base
-            break
-        except urllib.error.HTTPError as exc:
-            http_code = exc.code
-            body = ""
-            try:
-                body = exc.read().decode("utf-8", "replace")
-                http_msg = (json.loads(body) or {}).get("error") or ""
-            except Exception:
-                http_msg = ""
-            last_err = "%s：HTTP %s %s" % (base, exc.code, http_msg or body[:120].strip())
-            if http_msg:            # 管理器明确答复了，换备用地址也没意义
-                break
-        except Exception as exc:                      # 网络/解析错误
-            last_err = "%s：%s" % (base, exc)
+    urls = upd_server_urls(cfg)
 
-    if data is None:
-        res = {"ok": False, "enabled": True, "current_version": ver,
-               "app_key": key, "channel": chan, "base_url": "",
-               "software": "", "update_available": False,
-               "update_mode": "none", "config": public_update_cfg(cfg),
-               "key_missing": bool(http_msg),
-               "error": ("更新管理器不认这个应用标识 app_key=%s：%s" % (key, http_msg)
-                         if http_msg else
-                         "连不上更新管理器（%s）" % (last_err or "未知错误"))}
+    # 并行探测三个服务器，同时查 GitHub 版本号
+    results = [None] * len(urls)
+
+    def server_worker(i, base):
+        results[i] = probe_server(base, q)
+
+    gh_box = {}
+
+    def github_worker():
+        gh_box["gh"] = check_github(cfg, ver)
+
+    threads = [threading.Thread(target=github_worker, daemon=True)]
+    for i, base in enumerate(urls):
+        threads.append(threading.Thread(target=server_worker, args=(i, base), daemon=True))
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(10)
+
+    results = [r for r in results if isinstance(r, dict)]
+    gh = gh_box.get("gh") or check_github(cfg, ver)
+
+    valid = [r for r in results if r.get("reachable") and isinstance(r.get("data"), dict)]
+    avail_list = [r for r in valid if r["data"].get("update_available")]
+    candidates = avail_list or valid
+
+    # 在能用的服务器里实测下载速度，选最快的
+    if candidates:
+        def speed_worker(r):
+            r["speed"] = round(probe_download_speed(
+                (r["data"] or {}).get("direct_url") or ""), 1)
+        sts = [threading.Thread(target=speed_worker, args=(r,), daemon=True)
+               for r in candidates]
+        for t in sts:
+            t.start()
+        for t in sts:
+            t.join(10)
+        best = _pick_fastest(candidates)
+
+    def github_only_res(error_msg):
+        return {
+            "ok": True, "enabled": True,
+            "current_version": ver, "app_key": key, "channel": chan,
+            "base_url": "", "software": "",
+            "update_available": True,                 # 还有 GitHub 这个更新入口
+            "update_mode": "optional",
+            "version": gh["version"] or "",
+            "release_notes": "",
+            "direct_url": "",
+            "cloud_url": gh["url"],
+            "sha256": "", "file_name": "", "size": 0,
+            "min_version": "", "requires_restart": False,
+            "servers": results, "github": gh, "github_only": True,
+            "config": public_update_cfg(cfg),
+            "error": error_msg,
+        }
+
+    if not candidates:                                # 三个服务器全不通
+        res = github_only_res("三个更新服务器都连不上，请前往 GitHub 下载最新版本")
+        with UPD_LOCK:
+            UPD_CACHE["ts"] = time.time()
+            UPD_CACHE["data"] = res
         return res
 
+    data = best["data"]
     avail = bool(data.get("update_available"))
+
+    # 服务器都通但还没有新版本，而 GitHub 已有更新版本：同样给 GitHub 跳转入口
+    if not avail and gh.get("newer"):
+        res = github_only_res("更新服务器还没有发布新版本，GitHub 已有 %s，请前往下载"
+                              % (gh["version"] or "新版本"))
+        with UPD_LOCK:
+            UPD_CACHE["ts"] = time.time()
+            UPD_CACHE["data"] = res
+        return res
+
     res = {
-        "ok": True, "enabled": True, "base_url": used,
+        "ok": True, "enabled": True, "base_url": best["url"],
         "app_key": key, "channel": chan,
         "software": data.get("software") or "",
         "current_version": data.get("current_version") or ver,
@@ -571,6 +725,7 @@ def check_update(force=False):
         "size": data.get("size") or 0,
         "min_version": data.get("min_version") or "",
         "requires_restart": bool(data.get("requires_restart")),
+        "servers": results, "github": gh, "github_only": False,
         "config": public_update_cfg(cfg),
         "error": data.get("error") or "",
     }
@@ -730,6 +885,8 @@ def _start_update_task(info, kind):
             return False, "已有更新任务在进行"
         if kind == "download" and not (info.get("direct_url") or ""):
             return False, "更新管理器没有提供直链，只有网盘链接，请在浏览器里手动下载"
+        if kind == "apply" and not (info.get("direct_url") or ""):
+            return False, "更新管理器没有提供直链，请前往 GitHub 下载最新版本"
         UPD_DL.update(running=True, phase="准备中", error="", log=[], install_started=0.0)
         # 已经下载并校验过的同一个版本要保留下来，供「安装并重启」直接复用
         reusable = (UPD_DL["verified"] and UPD_DL["path"]

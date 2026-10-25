@@ -289,6 +289,7 @@
     <div class="dlgf">
       <button class="ghost" id="btn-updonlydl">仅下载</button>
       <button class="ghost" id="btn-updlater">稍后再说</button>
+      <button class="primary hide" id="btn-updgithub">前往 GitHub 下载</button>
       <button class="primary" id="btn-updnow">立即更新</button>
     </div>
   </div>
@@ -530,27 +531,44 @@ async function runCheck(force){
   const avail  = upd.avail();
   const forced = upd.forced();
 
-  // 顶部横幅（强制更新时由遮罩接管，不再显示横幅）
-  $('#updbanner').classList.toggle('hide', !(avail && !forced));
-  if (avail && !forced){
-    $('#bannerver').textContent = 'v' + (UPD.version || '');
-    $('#bannertip').textContent = firstLine(UPD.release_notes) || '点击查看更新说明';
+  // 有更新时弹窗面板接管；横幅只在弹窗关闭后作为提醒保留
+  $('#updbanner').classList.toggle('hide', !avail);
+  if (avail){
+    $('#bannerver').textContent = 'v' + (UPD.version || (UPD.github && UPD.github.version) || '');
+    $('#bannertip').textContent = firstLine(UPD.release_notes)
+      || (UPD.github_only ? '前往 GitHub 下载最新版本' : '点击查看更新说明');
   }
 
-  if (forced) openUpd(true);          // 按更新管理器的要求锁住界面
+  if (avail) openUpd(forced);          // 有更新就弹面板（强制更新不允许关闭）
+
+  if (avail) maybeAutoApply();         // 有直链就自动下载并自动安装
 
   if (force){
-    if (UPD.key_missing){                      // 管理器不认这个 app_key
-      verMsg(UPD.error, 'err');
-    } else if (UPD.ok === false || UPD.error){ // 连不上 / 其它错误
+    if (UPD.ok === false || UPD.error){ // 连不上 / 其它错误
       verMsg(UPD.error || '连不上更新管理器', 'warn');
     } else if (avail){
-      verMsg('发现新版本 v' + UPD.version, 'info');
+      verMsg(UPD.github_only
+              ? '三个更新服务器都连不上，请前往 GitHub 下载'
+              : '发现新版本 v' + UPD.version, 'info');
     } else {
       verMsg('已是最新版本' + (UPD.software ? '（' + UPD.software + '）' : ''), 'ok');
     }
   }
   return UPD;
+}
+
+/* 有更新且有直链：自动下载并自动调用飞牛应用中心命令安装。
+   每个版本只自动试一次，避免失败后每次打开都反复装；失败后仍可手动点「立即更新」重试。 */
+async function maybeAutoApply(){
+  if (UPD.github_only || !UPD.direct_url) return;
+  if (!UPD.config || UPD.config.auto_install === false) return;
+  if (UPTARGET) return;
+  if (localStorage.getItem('upd-auto-try') === UPD.version) return;
+  let s = {};
+  try{ s = await api('/api/update/status'); }catch(e){}
+  if (s.running || s.phase === '安装中') return;
+  localStorage.setItem('upd-auto-try', UPD.version);
+  startApply();
 }
 
 /* ---------- 更新弹窗 / 强制遮罩 ---------- */
@@ -566,26 +584,40 @@ function openUpd(forced){
 
   $('#updtitle').textContent = (UPD.software ? UPD.software + ' ' : '') + '发现新版本';
   $('#updfrom').textContent = 'v' + (UPD.current_version || '?');
-  $('#updto').textContent = 'v' + (UPD.version || '?');
-  $('#updnotes').textContent = UPD.release_notes || '（本次更新未提供说明）';
+  $('#updto').textContent = UPD.version ? ('v' + UPD.version)
+    : ((UPD.github && UPD.github.version) ? ('v' + UPD.github.version) : '?');
+  $('#updnotes').textContent = UPD.release_notes
+    || (UPD.github_only ? (UPD.error || '请前往 GitHub 下载最新版本。')
+                        : '（本次更新未提供说明）');
+
+  const ghOnly = !!UPD.github_only;
+  const hasDl = !!UPD.direct_url;
+  const ghUrl = UPD.cloud_url || (UPD.github && UPD.github.url) || '';
 
   const chips = [];
   if (UPD.size) chips.push(bytes(UPD.size));
   chips.push(UPD.channel || 'stable');
   if (UPD.min_version) chips.push('需 ≥ v' + UPD.min_version);
   if (UPD.requires_restart) chips.push('安装后需重启应用');
+  if (UPD.github && UPD.github.version){
+    chips.push('GitHub 最新 v' + UPD.github.version);
+  }
   let html = chips.map(c => '<span class="chip">' + esc(c) + '</span>').join('');
-  if (!UPD.direct_url && UPD.cloud_url){
-    html += '<a class="chip" href="' + esc(UPD.cloud_url) + '" target="_blank" rel="noopener">前往下载页</a>';
+  if (!hasDl && ghUrl){
+    html += '<a class="chip" href="' + esc(ghUrl) + '" target="_blank" rel="noopener">前往下载页</a>';
   }
   $('#updmeta').innerHTML = html;
 
-  const hasDl = !!UPD.direct_url;
   $('#btn-updnow').disabled = !hasDl;
   $('#btn-updonlydl').disabled = !hasDl;
   $('#btn-updonlydl').classList.toggle('hide', !hasDl);
-  if (!hasDl){
-    updMsg('更新管理器只提供了网盘链接，请从上面的下载页手动获取安装包。', 'warn');
+  $('#btn-updnow').classList.toggle('hide', ghOnly);
+  $('#btn-updgithub').classList.toggle('hide', !ghOnly);
+  if (ghOnly){
+    updMsg(UPD.error || '请前往 GitHub 下载最新版本。', 'warn');
+  } else if (!hasDl){
+    updMsg(UPD.cloud_url ? '更新管理器没有提供直链，请从上方下载页手动获取安装包。'
+                          : '更新管理器没有提供直链，请前往 GitHub 下载最新版本。', 'warn');
   } else {
     updMsg('');
   }
@@ -677,7 +709,13 @@ async function pollUpd(){
     setTimeout(() => location.reload(), 1200);
     return;
   }
-  if (!s.running && s.phase !== '安装中') stopUpdPoll();
+  if (!s.running && s.phase !== '安装中'){
+    if (s.phase === '失败' && UPTARGET){           // 自动/手动更新失败后，允许下次重试
+      UPTARGET = '';
+      localStorage.removeItem('upd-to');
+    }
+    stopUpdPoll();
+  }
 }
 
 /* ---------- 触发下载 / 安装 ---------- */
@@ -758,6 +796,10 @@ $('#btn-updclose').onclick = closeUpd;
 $('#btn-updlater').onclick = closeUpd;          // 强制更新时该按钮已被隐藏
 $('#btn-updnow').onclick = updateNow;
 $('#btn-updonlydl').onclick = startDownload;
+$('#btn-updgithub').onclick = () => {
+  const u = UPD.cloud_url || (UPD.github && UPD.github.url) || 'https://github.com/cjm2004/fnos-fpk-extractor/releases';
+  window.open(u, '_blank', 'noopener');
+};
 
 /* --- 捐赠 --- */
 function closeDonate(){ $('#donatedlg').classList.add('hide'); }
