@@ -146,6 +146,11 @@
   .chip{font-size:11.5px;color:var(--dim);background:var(--panel2);border:1px solid var(--line);
         border-radius:20px;padding:2px 10px;text-decoration:none;display:inline-block}
   a.chip:hover{border-color:var(--accent);color:var(--accent)}
+  .bigdl{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;
+         margin:4px 0 2px;padding:13px 16px;border-radius:12px;text-decoration:none;
+         background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;
+         font-size:15px;font-weight:650;transition:.15s}
+  .bigdl:hover{filter:brightness(1.06);color:#fff}
   .notes{font-size:13px;line-height:1.7;white-space:pre-wrap;word-break:break-word;margin-bottom:10px;
          background:var(--panel2);border:1px solid var(--line);border-radius:10px;
          padding:10px 12px;max-height:220px;overflow:auto}
@@ -273,6 +278,7 @@
     <div class="dlgb">
       <div class="kv">当前 <b id="updfrom"></b> → 新版本 <b class="up" id="updto"></b></div>
       <div class="meta" id="updmeta"></div>
+      <a class="bigdl hide" id="updbigdl" href="#" target="_blank" rel="noopener">前往下载页</a>
       <div class="notes" id="updnotes"></div>
       <div class="forcedbar hide" id="updprev" style="border-radius:10px;border:1px solid var(--line);margin-bottom:10px"></div>
       <div id="updprog" class="hide">
@@ -616,10 +622,15 @@ function openUpd(forced){
     chips.push('GitHub 最新 v' + UPD.github.version);
   }
   let html = chips.map(c => '<span class="chip">' + esc(c) + '</span>').join('');
-  if (!hasDl && ghUrl){
-    html += '<a class="chip" href="' + esc(ghUrl) + '" target="_blank" rel="noopener">前往下载页</a>';
-  }
   $('#updmeta').innerHTML = html;
+
+  const big = $('#updbigdl');
+  if (!hasDl && ghUrl && !ghOnly){
+    big.href = ghUrl;
+    big.classList.remove('hide');
+  } else {
+    big.classList.add('hide');
+  }
 
   $('#btn-updnow').disabled = !hasDl;
   $('#btn-updonlydl').disabled = !hasDl;
