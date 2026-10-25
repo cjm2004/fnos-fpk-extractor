@@ -543,7 +543,7 @@ def check_github(cfg, ver):
             "User-Agent": "fpk-extractor/%s" % ver,
             "Accept": "application/vnd.github+json",
         })
-        with urllib.request.urlopen(req, timeout=8) as resp:
+        with urllib.request.urlopen(req, timeout=6) as resp:
             data = json.loads(resp.read().decode("utf-8", "replace"))
         gh["release_url"] = (data.get("html_url") or "").strip()
         gh["version"] = (data.get("tag_name") or "").strip()
@@ -563,7 +563,7 @@ def probe_server(base, q):
              "error": "", "data": None, "speed": 0.0}
     t0 = time.time()
     try:
-        entry["data"] = http_json("%s/api/check-update?%s" % (base, q), timeout=6)
+        entry["data"] = http_json("%s/api/check-update?%s" % (base, q), timeout=5)
         entry["reachable"] = True
     except urllib.error.HTTPError as exc:
         body = ""
@@ -650,27 +650,38 @@ def check_update(force=False):
     for t in threads:
         t.start()
     for t in threads:
-        t.join(10)
+        t.join(4)
 
     results = [r for r in results if isinstance(r, dict)]
-    gh = gh_box.get("gh") or check_github(cfg, ver)
+    gh = gh_box.get("gh") or {
+        "url": cfg.get("github_url") or UPD_DEFAULT["github_url"],
+        "version": "", "newer": False, "asset_url": "", "release_url": "",
+        "error": "GitHub 版本检查超时",
+    }
 
     valid = [r for r in results if r.get("reachable") and isinstance(r.get("data"), dict)]
     avail_list = [r for r in valid if r["data"].get("update_available")]
     candidates = avail_list or valid
+    dl_candidates = [r for r in candidates if (r["data"] or {}).get("direct_url")]
 
-    # 在能用的服务器里实测下载速度，选最快的
-    if candidates:
+    # 手动检查时才实测下载速度（自动检查求快，按响应时间选，避免网关超时）
+    if force and len(dl_candidates) >= 2:
         def speed_worker(r):
             r["speed"] = round(probe_download_speed(
                 (r["data"] or {}).get("direct_url") or ""), 1)
         sts = [threading.Thread(target=speed_worker, args=(r,), daemon=True)
-               for r in candidates]
+               for r in dl_candidates]
         for t in sts:
             t.start()
         for t in sts:
-            t.join(10)
+            t.join(3)
+        best = _pick_fastest(dl_candidates)
+    elif dl_candidates:
+        best = dl_candidates[0]
+    elif candidates:
         best = _pick_fastest(candidates)
+    else:
+        best = None
 
     def github_only_res(error_msg):
         return {
@@ -1009,7 +1020,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         for k, v in (extra or {}).items():
             self.send_header(k, v)
-        self.end_headers()
+        try:
+            self.end_headers()
+        except (BrokenPipeError, ConnectionResetError):
+            return
         try:
             self.wfile.write(body)
         except (BrokenPipeError, ConnectionResetError):
@@ -1090,10 +1104,10 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/update/check":
             return self._json(check_update(True))
         if path == "/api/update/download":
-            ok, err = _start_update_task(check_update(True), "download")
+            ok, err = _start_update_task(check_update(False), "download")
             return self._json({"ok": ok, "error": err, "status": update_status()})
         if path == "/api/update/apply":
-            ok, err = _start_update_task(check_update(True), "apply")
+            ok, err = _start_update_task(check_update(False), "apply")
             return self._json({"ok": ok, "error": err, "status": update_status()})
         return self._json({"error": "not found"}, 404)
 
